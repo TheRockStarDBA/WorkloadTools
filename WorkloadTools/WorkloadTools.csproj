@@ -9,10 +9,11 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>WorkloadTools</RootNamespace>
     <AssemblyName>WorkloadTools</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -22,6 +23,7 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -30,10 +32,38 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup>
+    <CurrentPlatform>x86</CurrentPlatform>
+    <CurrentPlatform Condition="'$(PROCESSOR_ARCHITECTURE)'=='AMD64' or '$(PROCESSOR_ARCHITEW6432)'=='AMD64'">x64</CurrentPlatform>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x86'">
+    <DebugSymbols>true</DebugSymbols>
+    <OutputPath>bin\x86\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DebugType>full</DebugType>
+    <PlatformTarget>x86</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x86'">
+    <OutputPath>bin\x86\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <Optimize>true</Optimize>
+    <DebugType>pdbonly</DebugType>
+    <PlatformTarget>x86</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="DouglasCrockford.JsMin, Version=1.1.3.0, Culture=neutral, PublicKeyToken=99147aa1108448b7, processorArchitecture=MSIL">
       <HintPath>..\packages\DouglasCrockford.JsMin.1.1.3\lib\net40-client\DouglasCrockford.JsMin.dll</HintPath>
+    </Reference>
+    <Reference Include="FastMember, Version=1.5.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\FastMember.1.5.0\lib\net461\FastMember.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.SqlServer.AzureStorageEnum, Version=14.100.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\lib\net40\Microsoft.SqlServer.AzureStorageEnum.dll</HintPath>
@@ -155,21 +185,24 @@
       <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\lib\net40\Microsoft.SqlServer.WmiEnum.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Microsoft.SqlServer.Xe.Core, Version=14.100.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=AMD64">
+    <Reference Include="Microsoft.SqlServer.Xe.Core, Version=14.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\runtimes\win-x86\native\Microsoft.SqlServer.Xe.Core.dll</HintPath>
+      <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\runtimes\win-$(CurrentPlatform)\native\Microsoft.SqlServer.Xe.Core.dll</HintPath>
     </Reference>
-    <Reference Include="Microsoft.SqlServer.XEvent.Linq, Version=12.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=x86">
+    <Reference Include="Microsoft.SqlServer.XEvent.Linq, Version=14.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\runtimes\win-x86\native\Microsoft.SqlServer.XEvent.Linq.dll</HintPath>
+      <HintPath>..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\runtimes\win-$(CurrentPlatform)\native\Microsoft.SqlServer.XEvent.Linq.dll</HintPath>
+    </Reference>
+    <Reference Include="NFX, Version=3.0.0.1, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NFX.3.5.0.5\lib\NFX.dll</HintPath>
     </Reference>
     <Reference Include="NLog, Version=4.0.0.0, Culture=neutral, PublicKeyToken=5120e14c03d0593c, processorArchitecture=MSIL">
       <HintPath>..\packages\NLog.4.4.12\lib\net40\NLog.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
-    <Reference Include="System.Data.SQLite, Version=1.0.108.0, Culture=neutral, PublicKeyToken=db937bc2d44ff139, processorArchitecture=MSIL">
-      <HintPath>..\packages\System.Data.SQLite.Core.1.0.108.0\lib\net40\System.Data.SQLite.dll</HintPath>
+    <Reference Include="System.Data.SQLite, Version=1.0.112.0, Culture=neutral, PublicKeyToken=db937bc2d44ff139, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Data.SQLite.Core.1.0.112.0\lib\net46\System.Data.SQLite.dll</HintPath>
     </Reference>
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Xml.Linq" />
@@ -189,14 +222,29 @@
     <Compile Include="Consumer\Replay\ReplayCommand.cs" />
     <Compile Include="Consumer\Replay\ReplayWorker.cs" />
     <Compile Include="Consumer\Replay\ResultSetConsumer.cs" />
-    <Compile Include="Consumer\WorkloadFile\WorkloadFile.cs" />
     <Compile Include="Consumer\WorkloadFile\WorkloadFileWriterConsumer.cs" />
     <Compile Include="CounterWorkloadEvent.cs" />
+    <Compile Include="BufferedEventQueue.cs" />
+    <Compile Include="ErrorWorkloadEvent.cs" />
+    <Compile Include="GlobalSuppressions.cs" />
+    <Compile Include="Listener\ReadIteration.cs" />
+    <Compile Include="Listener\Trace\FileTraceEventDataReader.cs" />
+    <Compile Include="Listener\Trace\TraceEventDataReader.cs" />
+    <Compile Include="Listener\Trace\TraceEventParser.cs" />
+    <Compile Include="Listener\Trace\TraceUtils.cs" />
+    <Compile Include="MMFEventQueue.cs" />
     <Compile Include="ExecutionWorkloadEvent.cs" />
     <Compile Include="FilterPredicate.cs" />
+    <Compile Include="IEventQueue.cs" />
     <Compile Include="Listener\ExtendedEvents\ExtendedEventsWorkloadListener.cs" />
     <Compile Include="Listener\ExtendedEvents\ExtendedEventsEventFilter.cs" />
     <Compile Include="Listener\ExtendedEvents\ExtendedEventsFilterPredicate.cs" />
+    <Compile Include="Listener\ExtendedEvents\FileTargetXEventDataReader.cs" />
+    <Compile Include="Listener\ExtendedEvents\StreamXEventDataReader.cs" />
+    <Compile Include="Listener\ExtendedEvents\XEventDataReader.cs" />
+    <Compile Include="Listener\File\FileEventFilter.cs" />
+    <Compile Include="Listener\File\FileFilterPredicate.cs" />
+    <Compile Include="Listener\File\FileWorkloadListener.cs" />
     <Compile Include="Listener\Trace\ProfilerWorkloadListener.cs" />
     <Compile Include="Consumer\Replay\ReplayConsumer.cs" />
     <Compile Include="Listener\Trace\SqlTraceWorkloadListener.cs" />
@@ -213,8 +261,14 @@
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
       <DependentUpon>Settings.settings</DependentUpon>
     </Compile>
+    <Compile Include="Properties\SharedAssemblyInfo.cs" />
+    <Compile Include="BinarySerializedBufferedEventQueue.cs" />
     <Compile Include="SqlConnectionInfo.cs" />
+    <Compile Include="SqliteEventQueue.cs" />
     <Compile Include="Util\DataUtils.cs" />
+    <Compile Include="Util\ModelConverter.cs" />
+    <Compile Include="Util\RingBuffer.cs" />
+    <Compile Include="Util\StringExtensions.cs" />
     <Compile Include="WaitStatsWorkloadEvent.cs" />
     <Compile Include="Consumer\WorkloadConsumer.cs" />
     <Compile Include="WorkloadController.cs" />
@@ -251,15 +305,22 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="Consumer\Analysis\createAnalysisView.sql">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Consumer\Analysis\DatabaseSchema.sql">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\build\net40\Microsoft.SqlServer.SqlManagementObjects.targets" Condition="Exists('..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\build\net40\Microsoft.SqlServer.SqlManagementObjects.targets')" />
+  <Import Project="..\packages\System.Data.SQLite.Core.1.0.112.0\build\net46\System.Data.SQLite.Core.targets" Condition="Exists('..\packages\System.Data.SQLite.Core.1.0.112.0\build\net46\System.Data.SQLite.Core.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\build\net40\Microsoft.SqlServer.SqlManagementObjects.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.SqlServer.SqlManagementObjects.140.17279.0\build\net40\Microsoft.SqlServer.SqlManagementObjects.targets'))" />
-    <Error Condition="!Exists('..\packages\System.Data.SQLite.Core.1.0.108.0\build\net40\System.Data.SQLite.Core.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.Data.SQLite.Core.1.0.108.0\build\net40\System.Data.SQLite.Core.targets'))" />
+    <Error Condition="!Exists('..\packages\System.Data.SQLite.Core.1.0.112.0\build\net46\System.Data.SQLite.Core.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.Data.SQLite.Core.1.0.112.0\build\net46\System.Data.SQLite.Core.targets'))" />
   </Target>
-  <Import Project="..\packages\System.Data.SQLite.Core.1.0.108.0\build\net40\System.Data.SQLite.Core.targets" Condition="Exists('..\packages\System.Data.SQLite.Core.1.0.108.0\build\net40\System.Data.SQLite.Core.targets')" />
 </Project>

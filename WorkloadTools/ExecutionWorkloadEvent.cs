@@ -5,6 +5,7 @@ using System.Text;
 
 namespace WorkloadTools
 {
+    [Serializable]
     public class ExecutionWorkloadEvent : WorkloadEvent
     {
         public string Text { get; set; }
@@ -15,8 +16,9 @@ namespace WorkloadTools
         public string HostName { get; set; }
         public long? Reads { get; set; }
         public long? Writes { get; set; }
-        public int? CPU { get; set; }
-        public long? Duration { get; set; }
-
+        public long? CPU { get; set; }      // MICROSECONDS
+        public long? Duration { get; set; } // MICROSECONDS
+        public long? EventSequence { get; set; }
+        public int ReplaySleepMilliseconds { get; set; } = 0; // MILLISECONDS
     }
 }

@@ -16,11 +16,11 @@ namespace WorkloadTools.Consumer.Replay
     class ReplayWorker : IDisposable
     {
         private static Logger logger = LogManager.GetCurrentClassLogger();
-        private static bool COMPUTE_AVERAGE_STATS = Properties.Settings.Default.ReplayWorker_COMPUTE_AVERAGE_STATS;
-        private static bool CONSUME_RESULTS = Properties.Settings.Default.ReplayWorker_CONSUME_RESULTS;
-        private static int DEFAULT_QUERY_TIMEOUT_SECONDS = Properties.Settings.Default.ReplayWorker_DEFAULT_QUERY_TIMEOUT_SECONDS;
-        private static int WORKLOAD_INFO_COMMAND_COUNT = Properties.Settings.Default.ReplayWorker_WORKLOAD_INFO_COMMAND_COUNT;
-        private static bool MIMIC_APPLICATION_NAME = Properties.Settings.Default.ReplayWorker_MIMIC_APPLICATION_NAME;
+        public bool DisplayWorkerStats { get; set; }
+        public bool ConsumeResults { get; set; }
+        public int QueryTimeoutSeconds { get; set; }
+        public int WorkerStatsCommandCount { get; set; }
+        public bool MimicApplicationName { get; set; }
 
         private SqlConnection conn { get; set; }
 
@@ -30,9 +30,7 @@ namespace WorkloadTools.Consumer.Replay
         public bool StopOnError { get; set; } = false;
         public string Name { get; set; }
         public int SPID { get; set; }
-
-        private bool isRunning = false;
-        public bool IsRunning { get { return isRunning; } }
+        public bool IsRunning { get; private set; } = false;
 
         private Task runner = null;
         private CancellationTokenSource tokenSource;
@@ -42,6 +40,14 @@ namespace WorkloadTools.Consumer.Replay
             get
             {
                 return !Commands.IsEmpty;
+            }
+        }
+
+        public int QueueLength
+        {
+            get
+            {
+                return Commands.Count;
             }
         }
 
@@ -60,14 +66,21 @@ namespace WorkloadTools.Consumer.Replay
         private SqlTransformer transformer = new SqlTransformer();
 
         private Dictionary<int, int> preparedStatements = new Dictionary<int, int>();
+        private SpinWait _spinWait = new SpinWait();
+
+        private enum UserErrorType
+        {
+            Timeout = 82,
+            Error = 83
+        }
 
         private void InitializeConnection()
         {
-            logger.Info(String.Format("Worker [{0}] - Connecting to server {1} for replay...", Name, ConnectionInfo.ServerName));
+            logger.Trace($"Worker [{Name}] - Connecting to server {ConnectionInfo.ServerName} for replay...");
             string connString = BuildConnectionString();
             conn = new SqlConnection(connString);
             conn.Open();
-            logger.Info(String.Format("Worker [{0}] - Connected", Name));
+            logger.Trace($"Worker [{Name}] - Connected");
         }
 
         private string BuildConnectionString()
@@ -88,7 +101,7 @@ namespace WorkloadTools.Consumer.Replay
 
         public void Run()
         {
-            isRunning = true;
+            IsRunning = true;
             while (!stopped)
             {
                 try
@@ -115,15 +128,15 @@ namespace WorkloadTools.Consumer.Replay
         public void Stop(bool withLog)
         {
             if(withLog)
-                logger.Info(String.Format("Worker [{0}] - Stopping", Name));
+                logger.Trace($"Worker [{Name}] - Stopping");
 
             stopped = true;
-            isRunning = false;
+            IsRunning = false;
             if(tokenSource != null)
                 tokenSource.Cancel();
 
             if (withLog)
-                logger.Info(String.Format("Worker [{0}] - Stopped", Name));
+                logger.Trace("Worker [{Name}] - Stopped");
         }
 
 
@@ -145,8 +158,8 @@ namespace WorkloadTools.Consumer.Replay
             {
                 if (stopped)
                     return null;
-
-                Thread.Sleep(10);
+                
+                _spinWait.SpinOnce();
             }
             return result;
         }
@@ -162,7 +175,7 @@ namespace WorkloadTools.Consumer.Replay
                 try
                 {
                     ConnectionInfo.ApplicationName = "WorkloadTools-ReplayWorker";
-                    if (MIMIC_APPLICATION_NAME)
+                    if (MimicApplicationName)
                     {
                         ConnectionInfo.ApplicationName = command.ApplicationName;
                         if (String.IsNullOrEmpty(ConnectionInfo.ApplicationName))
@@ -175,7 +188,7 @@ namespace WorkloadTools.Consumer.Replay
                 catch (SqlException se)
                 {
                     logger.Error(se.Message);
-                    logger.Error(String.Format("Worker [{0}] - Unable to acquire the connection. Quitting the ReplayWorker", Name));
+                    logger.Error($"Worker [{Name}] - Unable to acquire the connection. Quitting the ReplayWorker");
                     return;
                 }
             }
@@ -193,8 +206,7 @@ namespace WorkloadTools.Consumer.Replay
 
             if (conn == null || (conn.State == System.Data.ConnectionState.Closed) || (conn.State == System.Data.ConnectionState.Broken))
             {
-                conn.ConnectionString += ";MultipleActiveResultSets=true;";
-                conn.Open();
+                InitializeConnection();
             }
 
 
@@ -203,7 +215,7 @@ namespace WorkloadTools.Consumer.Replay
 
             if (nst.CommandType == NormalizedSqlText.CommandTypeEnum.SP_RESET_CONNECTION)
             {
-                Stop(false);
+                //Stop(false);
                 return;
             }
             else if(nst.CommandType == NormalizedSqlText.CommandTypeEnum.SP_PREPARE)
@@ -229,14 +241,29 @@ namespace WorkloadTools.Consumer.Replay
             {
                 if (conn.Database != command.Database)
                 {
-                    logger.Trace(String.Format("Worker [{0}] - Changing database to {1} ", Name, command.Database));
+                    logger.Trace($"Worker [{Name}] - Changing database to {command.Database} ");
                     conn.ChangeDatabase(command.Database);
+                }
+
+                // if the command comes with a replay sleep, do it now
+                // the amount of milliseconds to sleep is set in
+                // FileWorkloadListener
+                // The other listeners do not set this value, as they
+                // already come with the original timing
+                // 
+                // Don't remove the IF test: even Sleep(0) can end up
+                // sleeping for 10ms or more. Sleep guarantees that
+                // the current thread sleeps for AT LEAST the amount
+                // of milliseconds set.
+                if (command.BeforeSleepMilliseconds > 2)
+                {
+                    Thread.Sleep(command.BeforeSleepMilliseconds);
                 }
 
                 using (SqlCommand cmd = new SqlCommand(command.CommandText))
                 {
                     cmd.Connection = conn;
-                    cmd.CommandTimeout = DEFAULT_QUERY_TIMEOUT_SECONDS;
+                    cmd.CommandTimeout = QueryTimeoutSeconds;
 
                     if (nst.CommandType == NormalizedSqlText.CommandTypeEnum.SP_PREPARE)
                     {
@@ -245,10 +272,14 @@ namespace WorkloadTools.Consumer.Replay
                         int handle = -1;
                         try
                         {
-                            handle = (int)cmd.ExecuteScalar();
-                            if (!preparedStatements.ContainsKey(nst.Handle))
+                            object res = cmd.ExecuteScalar();
+                            if (res != null)
                             {
-                                preparedStatements.Add(nst.Handle, handle);
+                                handle = (int)res;
+                                if (!preparedStatements.ContainsKey(nst.Handle))
+                                {
+                                    preparedStatements.Add(nst.Handle, handle);
+                                }
                             }
                         }
                         catch (NullReferenceException)
@@ -256,7 +287,7 @@ namespace WorkloadTools.Consumer.Replay
                             throw;
                         }
                     }
-                    else if (CONSUME_RESULTS)
+                    else if (ConsumeResults)
                     {
                         using(SqlDataReader reader = cmd.ExecuteReader())
                         using (ResultSetConsumer consumer = new ResultSetConsumer(reader))
@@ -270,23 +301,23 @@ namespace WorkloadTools.Consumer.Replay
                     }
                 }
 
-                logger.Trace(String.Format("Worker [{0}] - SUCCES - \n{1}", Name, command.CommandText));
-                if (commandCount > 0 && commandCount % WORKLOAD_INFO_COMMAND_COUNT == 0)
+                logger.Trace($"Worker [{Name}] - SUCCES - \n{command.CommandText}");
+                if (commandCount > 0 && commandCount % WorkerStatsCommandCount == 0)
                 {
                     var seconds = (DateTime.Now - previousCPSComputeTime).TotalSeconds;
                     var cps = (commandCount - previousCommandCount) / ((seconds == 0) ? 1 : seconds);
                     previousCPSComputeTime = DateTime.Now;
                     previousCommandCount = commandCount;
 
-                    if (COMPUTE_AVERAGE_STATS)
+                    if (DisplayWorkerStats)
                     {
                         commandsPerSecond.Add((int)cps);
                         cps = commandsPerSecond.Average();
-                    }
 
-                    logger.Info(String.Format("Worker [{0}] - {1} commands executed.", Name, commandCount));
-                    logger.Info(String.Format("Worker [{0}] - {1} commands pending.", Name, Commands.Count));
-                    logger.Info(String.Format("Worker [{0}] - {1} commands per second.", Name, (int)cps));
+                        logger.Info($"Worker [{Name}] - {commandCount} commands executed.");
+                        logger.Info($"Worker [{Name}] - {Commands.Count} commands pending.");
+                        logger.Info($"Worker [{Name}] - {(int)cps} commands per second.");
+                    }
                 }
             }
             catch(SqlException e)
@@ -296,16 +327,20 @@ namespace WorkloadTools.Consumer.Replay
                 {
                     RaiseTimeoutEvent(command.CommandText, conn);
                 }
+                else
+                {
+                    RaiseErrorEvent(command, e.Message, conn);
+                }
 
                 if (StopOnError)
                 {
-                    logger.Error(String.Format("Worker[{0}] - Error: \n{1}", Name, command.CommandText));
+                    logger.Error($"Worker[{Name}] - Error: \n{command.CommandText}");
                     throw;
                 }
                 else
                 {
-                    logger.Trace(String.Format("Worker [{0}] - Error: {1}", Name, command.CommandText));
-                    logger.Warn(String.Format("Worker [{0}] - Error: {1}", Name, e.Message));
+                    logger.Trace($"Worker [{Name}] - Error: {command.CommandText}");
+                    logger.Warn($"Worker [{Name}] - Error: {e.Message}");
                     logger.Trace(e.StackTrace);
                 }
             }
@@ -313,12 +348,12 @@ namespace WorkloadTools.Consumer.Replay
             {
                 if (StopOnError)
                 {
-                    logger.Error(String.Format("Worker[{0}] - Error: \n{1}", Name, command.CommandText));
+                    logger.Error($"Worker[{Name}] - Error: \n{command.CommandText}");
                     throw;
                 }
                 else
                 {
-                    logger.Error(String.Format("Worker [{0}] - Error: {1}", Name, e.Message));
+                    logger.Error($"Worker [{Name}] - Error: {e.Message}");
                     logger.Error(e.StackTrace);
                 }
             }
@@ -326,16 +361,35 @@ namespace WorkloadTools.Consumer.Replay
 
         private void RaiseTimeoutEvent(string commandText, SqlConnection conn)
         {
-            // This event is used by the SqlTraceWorkloadListener to identify timeout events
-            // ExtendedEventsWorkloadListener does not need this event, because the Attention
-            // event already contains the text of the command
-            string sql = "EXEC sp_trace_generateevent @eventid = 82, @userinfo = @userinfo, @userdata = @userdata;";
+            RaiseErrorEvent($"WorkloadTools.Timeout[{QueryTimeoutSeconds}]", commandText, UserErrorType.Timeout, conn);
+        }
+
+
+        private void RaiseErrorEvent(ReplayCommand Command, string ErrorMessage, SqlConnection conn)
+        {
+            string msg = "";
+            msg += "DATABASE:" + Environment.NewLine;
+            msg += Command.Database + Environment.NewLine;
+            msg += "MESSAGE:" + Environment.NewLine;
+            msg += ErrorMessage + Environment.NewLine;
+            msg += "--------------------" + Environment.NewLine;
+            msg += Command.CommandText;
+
+            RaiseErrorEvent("WorkloadTools.Replay",msg,UserErrorType.Error,conn);
+        }
+
+
+        private void RaiseErrorEvent(string info, string message, UserErrorType type, SqlConnection conn)
+        {
+            // Raise a custom event. Both SqlTrace and Extended Events can capture this event.
+            string sql = "EXEC sp_trace_generateevent @eventid = @eventid, @userinfo = @userinfo, @userdata = @userdata;";
 
             using (SqlCommand cmd = new SqlCommand(sql))
             {
                 cmd.Connection = conn;
-                cmd.Parameters.AddWithValue("@userinfo", "WorkloadTools.Timeout["+ DEFAULT_QUERY_TIMEOUT_SECONDS +"]");
-                cmd.Parameters.AddWithValue("@userdata", Encoding.Unicode.GetBytes(commandText));
+                cmd.Parameters.AddWithValue("@eventid", type);
+                cmd.Parameters.AddWithValue("@userinfo", info);
+                cmd.Parameters.AddWithValue("@userdata", Encoding.Unicode.GetBytes(message.Substring(0, message.Length > 8000 ? 8000 : message.Length)));
                 cmd.ExecuteNonQuery();
             }
         }
@@ -364,15 +418,17 @@ namespace WorkloadTools.Consumer.Replay
             if (conn != null)
             {
                 if (conn.State == System.Data.ConnectionState.Open)
-                    conn.Close();
-                conn.Dispose();
+                {
+                    try { conn.Close(); } catch (Exception) { /* swallow */ }
+                    try { conn.Dispose(); } catch (Exception) { /* swallow */ }
+                }
                 conn = null;
             }
             if (runner != null)
             {
                 while(!(runner.IsCompleted || runner.IsFaulted || runner.IsCanceled))
                 {
-                    Thread.Sleep(5);
+                    _spinWait.SpinOnce();
                 }
                 runner.Dispose();
                 runner = null;
@@ -382,7 +438,7 @@ namespace WorkloadTools.Consumer.Replay
                 tokenSource.Dispose();
                 tokenSource = null;
             }
-            logger.Trace(String.Format("Worker [{0}] - Disposed ", Name));
+            logger.Trace($"Worker [{Name}] - Disposed");
         }
 
     }

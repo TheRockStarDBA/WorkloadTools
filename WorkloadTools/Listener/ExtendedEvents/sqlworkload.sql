@@ -1,14 +1,5 @@
-﻿IF EXISTS (
-	SELECT *
-	FROM sys.dm_xe_sessions
-	WHERE name = 'sqlworkload'
-)
-BEGIN
-    ALTER EVENT SESSION [sqlworkload] ON SERVER STATE = STOP;
-    DROP EVENT SESSION [sqlworkload] ON SERVER;
-END
-
-CREATE EVENT SESSION [sqlworkload] ON SERVER 
+﻿
+CREATE EVENT SESSION [sqlworkload] ON {1}
 ADD EVENT sqlserver.attention (
 	ACTION(	
 		package0.event_sequence, 
@@ -16,8 +7,7 @@ ADD EVENT sqlserver.attention (
 		sqlserver.client_hostname, 
 		sqlserver.database_id, 
 		sqlserver.database_name, 
-		sqlserver.is_system, 
-		sqlserver.server_principal_name, 
+		sqlserver.{2}, 
 		sqlserver.session_id, 
 		sqlserver.sql_text
 	)
@@ -33,8 +23,7 @@ ADD EVENT sqlserver.rpc_completed (
 		sqlserver.client_hostname, 
 		sqlserver.database_id, 
 		sqlserver.database_name, 
-		sqlserver.is_system, 
-		sqlserver.server_principal_name, 
+		sqlserver.{2}, 
 		sqlserver.session_id
 	) 
 	{0}
@@ -47,15 +36,26 @@ ADD EVENT sqlserver.sql_batch_completed (
 		sqlserver.client_hostname, 
 		sqlserver.database_id, 
 		sqlserver.database_name, 
-		sqlserver.is_system, 
-		sqlserver.server_principal_name, 
+		sqlserver.{2}, 
 		sqlserver.session_id
 	) 
 	{0}
+),
+ADD EVENT sqlserver.user_event(
+	ACTION(
+		package0.event_sequence, 
+		sqlserver.client_app_name, 
+		sqlserver.client_hostname, 
+		sqlserver.database_id, 
+		sqlserver.database_name, 
+		sqlserver.{2}, 
+		sqlserver.session_id
+	) 
+    WHERE [sqlserver].[like_i_sql_unicode_string]([user_info],N'WorkloadTools%')
 )
 WITH (
 	MAX_MEMORY = 40960 KB,
-	EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
+	EVENT_RETENTION_MODE = NO_EVENT_LOSS,
 	MAX_DISPATCH_LATENCY = 30 SECONDS,
 	MAX_EVENT_SIZE = 0 KB,
 	MEMORY_PARTITION_MODE = PER_CPU,
@@ -64,4 +64,4 @@ WITH (
 );
 
 
-ALTER EVENT SESSION [sqlworkload] ON SERVER STATE = START;
+ALTER EVENT SESSION [sqlworkload] ON {1} STATE = START;

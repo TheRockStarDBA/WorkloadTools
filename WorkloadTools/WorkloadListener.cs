@@ -13,17 +13,54 @@ namespace WorkloadTools
 {
     public abstract class WorkloadListener : IDisposable
     {
-
         private static Logger logger = LogManager.GetCurrentClassLogger();
 
         public SqlConnectionInfo ConnectionInfo { get; set; }
         public string Source { get; set; }
 
-        public string ApplicationFilter { get; set; }
-        public string DatabaseFilter { get; set; }
-        public string HostFilter { get; set; } 
-        public string LoginFilter { get; set; }
+        private string[] _applicationFilter;
+        private string[] _databaseFilter;
+        private string[] _hostFilter;
+        private string[] _loginFilter;
 
+        public string[] ApplicationFilter
+        {
+            get { return _applicationFilter; }
+            set {
+                _applicationFilter = value;
+                if(_filter != null) _filter.ApplicationFilter.PredicateValue = _applicationFilter;
+            }
+        }
+        public string[] DatabaseFilter
+        {
+            get { return _databaseFilter; }
+            set
+            {
+                _databaseFilter = value;
+                if (_filter != null) _filter.DatabaseFilter.PredicateValue = _databaseFilter;
+            }
+        }
+        public string[] HostFilter
+        {
+            get { return _hostFilter; }
+            set
+            {
+                _hostFilter = value;
+                if (_filter != null) _filter.HostFilter.PredicateValue = _hostFilter;
+            }
+        } 
+        public string[] LoginFilter
+        {
+            get { return _loginFilter; }
+            set
+            {
+                _loginFilter = value;
+                if (_filter != null) _filter.LoginFilter.PredicateValue = _loginFilter;
+            }
+        }
+
+        public int StatsCollectionIntervalSeconds { get; set; } = 60;
+		public int TimeoutMinutes { get; set; } = 0;
 
         private WorkloadEventFilter _filter;
 
@@ -32,10 +69,6 @@ namespace WorkloadTools
             {
                 if(_filter != null)
                 {
-                    _filter.ApplicationFilter.PredicateValue = ApplicationFilter;
-                    _filter.DatabaseFilter.PredicateValue = DatabaseFilter;
-                    _filter.HostFilter.PredicateValue = HostFilter;
-                    _filter.LoginFilter.PredicateValue = LoginFilter;
                     return _filter;
                 }
                 else
@@ -49,12 +82,34 @@ namespace WorkloadTools
             }
         }
 
-        protected ConcurrentQueue<WorkloadEvent> Events = new ConcurrentQueue<WorkloadEvent>();
+        protected IEventQueue Events;
+
+        public EventQueueType QueueType = EventQueueType.BinarySerialized;
 
         protected bool stopped;
 
+        public WorkloadListener()
+        {
+            switch (QueueType)
+            {
+                case EventQueueType.MMF:
+                    Events = new MMFEventQueue();
+                    break;
+                case EventQueueType.LiteDB:
+                    throw new NotImplementedException();
+                case EventQueueType.Sqlite:
+                    throw new NotImplementedException();
+                case EventQueueType.BinarySerialized:
+                    Events = new BinarySerializedBufferedEventQueue();
+                    Events.BufferSize = 10000;
+                    break;
+            }
+            
+        }
+
         public void Dispose() {
             stopped = true;
+            Events.Dispose();
             Dispose(true);
             GC.SuppressFinalize(this);
         }
@@ -77,12 +132,15 @@ namespace WorkloadTools
                     CounterWorkloadEvent evt = new CounterWorkloadEvent();
                     evt.Type = WorkloadEvent.EventType.PerformanceCounter;
                     evt.StartTime = DateTime.Now;
-                    evt.Name = CounterWorkloadEvent.CounterNameEnum.AVG_CPU_USAGE;
-                    evt.Value = GetLastCPUUsage();
+
+                    evt.Counters.Add(
+                        CounterWorkloadEvent.CounterNameEnum.AVG_CPU_USAGE,
+                        GetLastCPUUsage()
+                    );
 
                     Events.Enqueue(evt);
 
-                    Thread.Sleep(60000); // 1 minute
+                    Thread.Sleep(StatsCollectionIntervalSeconds * 1000); // 1 minute
                 }
             }
             catch (Exception ex)
@@ -105,33 +163,50 @@ namespace WorkloadTools
                 conn.Open();
                 // Calculate CPU usage during the last minute interval
                 string sql = @"
-                    WITH ts_now(ts_now) AS (
-	                    SELECT cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)
-                    ),
-                    CPU_Usage AS (
-	                    SELECT TOP(256) SQLProcessUtilization, 
-				                       DATEADD(ms, -1 * (ts_now.ts_now - [timestamp]), GETDATE()) AS [Event_Time] 
-	                    FROM (
-		                    SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
-			                    record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
-			                    AS [SystemIdle], 
-			                    record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
-			                    AS [SQLProcessUtilization], [timestamp] 
-		                    FROM (
-			                    SELECT [timestamp], CONVERT(xml, record) AS [record] 
-			                    FROM sys.dm_os_ring_buffers WITH (NOLOCK)
-			                    WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-				                    AND record LIKE N'%<SystemHealth>%'
-		                    ) AS x
-	                    ) AS y 
-	                    CROSS JOIN ts_now
-                    )
-                    SELECT 
-                        ISNULL(AVG(SQLProcessUtilization),0) AS avg_CPU_percent
-                    FROM CPU_Usage
-                    WHERE [Event_Time] >= DATEADD(minute, -1, GETDATE())
-                    OPTION (RECOMPILE);
+                    IF SERVERPROPERTY('Edition') = 'SQL Azure'
+                    BEGIN
+                        WITH CPU_Usage AS (
+                            SELECT avg_cpu_percent, end_time AS Event_Time
+                            FROM sys.dm_db_resource_stats WITH (NOLOCK) 
+                        )
+                        SELECT 
+                            CAST(ISNULL(AVG(avg_cpu_percent),0) AS int) AS avg_CPU_percent
+                        FROM CPU_Usage
+                        WHERE [Event_Time] >= DATEADD(minute, -{0}, GETDATE())
+                        OPTION (RECOMPILE);
+                    END
+                    ELSE
+                    BEGIN
+                        WITH ts_now(ts_now) AS (
+                            SELECT cpu_ticks/(cpu_ticks/ms_ticks) FROM sys.dm_os_sys_info WITH (NOLOCK)
+                        ),
+                        CPU_Usage AS (
+                            SELECT TOP(256) SQLProcessUtilization, 
+                                            DATEADD(ms, -1 * (ts_now.ts_now - [timestamp]), GETDATE()) AS [Event_Time] 
+                            FROM (
+                                SELECT record.value('(./Record/@id)[1]', 'int') AS record_id, 
+                                    record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') 
+                                    AS [SystemIdle], 
+                                    record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') 
+                                    AS [SQLProcessUtilization], [timestamp] 
+                                FROM (
+                                    SELECT [timestamp], CONVERT(xml, record) AS [record] 
+                                    FROM sys.dm_os_ring_buffers WITH (NOLOCK)
+                                    WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
+                                        AND record LIKE N'%<SystemHealth>%'
+                                ) AS x
+                            ) AS y 
+                            CROSS JOIN ts_now
+                        )
+                        SELECT 
+                            ISNULL(AVG(SQLProcessUtilization),0) AS avg_CPU_percent
+                        FROM CPU_Usage
+                        WHERE [Event_Time] >= DATEADD(minute, -{0}, GETDATE())
+                        OPTION (RECOMPILE);
+                    END
                 ";
+
+                sql = String.Format(sql,StatsCollectionIntervalSeconds / 60);
 
                 int avg_CPU_percent = -1;
 
@@ -164,7 +239,7 @@ namespace WorkloadTools
 
                     Events.Enqueue(evt);
 
-                    Thread.Sleep(60000); // 1 minute
+                    Thread.Sleep(StatsCollectionIntervalSeconds * 1000); // 1 minute
                 }
             }
             catch (Exception ex)
@@ -197,8 +272,19 @@ namespace WorkloadTools
             }
 
             // catch the case when stats are reset
-            long newWaitCount = (long)newWaits.Compute("SUM(wait_count)", null);
-            long lastWaitCount = (long)lastWaits.Compute("SUM(wait_count)", null);
+            long newWaitCount = 0;
+            object newWaitCountObj = newWaits.Compute("SUM(wait_count)", null);
+            if (newWaitCountObj != DBNull.Value)
+            {
+                newWaitCount = Convert.ToInt64(newWaitCountObj);
+            }
+            long lastWaitCount = 0;
+            object lastWaitCountObj = lastWaits.Compute("SUM(wait_count)", null);
+            if (lastWaitCountObj != DBNull.Value)
+            {
+                lastWaitCount = Convert.ToInt64(lastWaitCountObj);
+            }
+
 
             // if newWaits < lastWaits --> reset
             // I can return newWaits without having to compute the diff
@@ -214,7 +300,7 @@ namespace WorkloadTools
                               wait_sec = Convert.ToDouble(table1["wait_sec"]) - Convert.ToDouble(table2["wait_sec"]),
                               resource_sec = Convert.ToDouble(table1["resource_sec"]) - Convert.ToDouble(table2["resource_sec"]),
                               signal_sec = Convert.ToDouble(table1["signal_sec"]) - Convert.ToDouble(table2["signal_sec"]),
-                              wait_count = Convert.ToInt32(table1["wait_count"]) - Convert.ToInt32(table2["wait_count"])
+                              wait_count = Convert.ToDouble(table1["wait_count"]) - Convert.ToDouble(table2["wait_count"])
                           };
 
             return DataUtils.ToDataTable(results.Where(w => w.wait_sec > 0));
@@ -304,7 +390,7 @@ namespace WorkloadTools
                                   wait_sec = Convert.ToDouble(table1["wait_sec"]),
                                   resource_sec = Convert.ToDouble(table1["resource_sec"]),
                                   signal_sec = Convert.ToDouble(table1["signal_sec"]),
-                                  wait_count = Convert.ToInt32(table1["wait_count"])
+                                  wait_count = Convert.ToDouble(table1["wait_count"])
                               };
 
                 return DataUtils.ToDataTable(results);

@@ -5,15 +5,15 @@ using System.Text;
 
 namespace WorkloadTools
 {
+    [Serializable]
     public class CounterWorkloadEvent : WorkloadEvent
     {
         public enum CounterNameEnum
         {
-            AVG_CPU_USAGE
+            AVG_CPU_USAGE = 1
         }
 
-        public CounterNameEnum Name { get; set; }
-        public int Value { get; set; }
+        public Dictionary<CounterNameEnum, float> Counters { get; internal set; } = new Dictionary<CounterNameEnum, float>();
 
         public CounterWorkloadEvent()
         {

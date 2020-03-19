@@ -1,12 +1,14 @@
 ﻿using NLog;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using WorkloadTools.Properties;
 
 namespace WorkloadTools.Consumer.Analysis
@@ -16,6 +18,8 @@ namespace WorkloadTools.Consumer.Analysis
         private static Logger logger = LogManager.GetCurrentClassLogger();
 
         private static Hashtable prepSql = new Hashtable();
+
+        private static ConcurrentDictionary<long, NormalizedSqlText> cachedQueries = new ConcurrentDictionary<long, NormalizedSqlText>();
 
         private static Regex _doubleApostrophe = new Regex("('')(?<string>.*?)('')", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.IgnorePatternWhitespace | RegexOptions.CultureInvariant);
         private static Regex _delimiterStart = new Regex("(--)|(/\\*)|'", RegexOptions.Compiled);
@@ -42,18 +46,63 @@ namespace WorkloadTools.Consumer.Analysis
         private static Regex _numericConstant = new Regex("(?<prefix>[\\(\\s,=\\-><\\!\\&\\|\\+\\*\\/\\%\\~\\$])(?<digits>[\\-\\.\\d]+)", RegexOptions.Compiled);
         private static Regex _inClause = new Regex("IN\\s*\\(\\s*\\{.*\\}\\s*\\)", RegexOptions.Compiled | RegexOptions.Singleline);
         private static Regex _brackets = new Regex("(\\[|\\])", RegexOptions.Compiled);
+        private static Regex _TVPExecute = new Regex(@"DECLARE\s*@(?<tablename>(\w+))\s*(AS)?\s*(?<tabletype>(\w+)).*EXEC(UTE)?\s*(?<object>(\S+)).*@\k<tablename>\sREADONLY", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-        private static bool TRUNCATE_TO_4000 = Settings.Default.SqlTextNormalizer_TRUNCATE_TO_4000;
-        private static bool TRUNCATE_TO_1024K = Settings.Default.SqlTextNormalizer_TRUNCATE_TO_1024K;
+        public bool TruncateTo4000 { get; set; }
+        public bool TruncateTo1024 { get; set; }
+
+        static Thread Sweeper;
+
+        static SqlTextNormalizer()
+        {
+            Sweeper = new Thread(() =>
+            {
+                try
+                {
+                    while (true)
+                    {
+                        var toDelete = cachedQueries.Where(t => t.Value.ReferenceCount < 10).ToList();
+                        foreach(var el in toDelete)
+                        {
+                            NormalizedSqlText nst = null;
+                            cachedQueries.TryRemove(el.Key, out nst);
+                        }
+                        Thread.Sleep(30000);
+                    }
+                }
+                catch (Exception e)
+                {
+                    logger.Error(e.Message);
+                    logger.Error(e.StackTrace);
+                }
+            });
+            Sweeper.IsBackground = true;
+            Sweeper.Name = "SqlTextNormalizer.CacheSweeper";
+            Sweeper.Start();
+        }
 
         public NormalizedSqlText NormalizeSqlText(string sql, int spid)
         {
             try
             {
-                var result = NormalizeSqlText(sql, spid, true);
-                logger.Trace("NormalizeSqlText:[" + spid + "]: " + sql);
+                NormalizedSqlText result = null;
+                int hashCode = sql.GetHashCode();
+                if (cachedQueries.TryGetValue(hashCode, out result))
+                {
+                    if (result != null && result.OriginalText == sql)
+                    {
+                        result.ReferenceCount++;
+                        return result;
+                    }
+                }
+                result = NormalizeSqlText(sql, spid, true);
+                logger.Trace("NormalizeSqlText:[{0}]: {1}", spid, sql);
                 if (result != null)
-                    logger.Trace("NormalizeSqlText:[" + spid + "]: " + result.NormalizedText);
+                { 
+                    logger.Trace("NormalizeSqlText:[{0}]: {1}", spid, result.NormalizedText);
+                    result.ReferenceCount = 1;
+                    cachedQueries.TryAdd(hashCode, result);
+                }
                 return result;
             }
             catch (Exception)
@@ -79,7 +128,7 @@ namespace WorkloadTools.Consumer.Analysis
 
             sql = sql.Trim();
 
-            if (TRUNCATE_TO_1024K  && sql.Length > 1024000)
+            if (TruncateTo1024  && sql.Length > 1024000)
             {
                 result.Statement = "{SQL>1MB}";
                 result.NormalizedText = "{SQL>1MB}";
@@ -198,12 +247,22 @@ namespace WorkloadTools.Consumer.Analysis
                 }
                 if (sql == "SP_CURSOR" || sql == "SP_CURSORFETCH" || (sql == "SP_CURSORCLOSE" || sql == "SP_RESET_CONNECTION"))
                 {
-
                     return null;
                 }
             }
 
-            
+            if (sql.Contains("EXEC") && sql.Contains("READONLY"))
+            {
+                Match matchTVPExecute = _TVPExecute.Match(sql);
+                if (matchTVPExecute.Success)
+                {
+                    result.Statement = sql;
+                    result.NormalizedText = "EXECUTE " + matchTVPExecute.Groups["object"].ToString();
+                }
+            }
+
+
+
             result.NormalizedText = _emptyString.Replace(result.NormalizedText, "{STR}");
             result.NormalizedText = _stringConstant.Replace(result.NormalizedText, "{STR}");
             result.NormalizedText = _unicodeConstant.Replace(result.NormalizedText, "{NSTR}");
@@ -216,10 +275,11 @@ namespace WorkloadTools.Consumer.Analysis
             result.NormalizedText = TruncateSql(result.NormalizedText);
             if (flag1 && num != 0)
             {
-                if (!prepSql.ContainsKey((object)(spid.ToString() + "_" + num.ToString())))
-                    prepSql.Add((object)(spid.ToString() + "_" + num.ToString()), (object)sql);
+                var theKey = (object)(spid.ToString() + "_" + num.ToString());
+                if (!prepSql.ContainsKey(theKey))
+                    prepSql.Add(theKey, sql);
                 else
-                    prepSql[(object)(spid.ToString() + "_" + num.ToString())] = (object)sql;
+                    prepSql[theKey] = sql;
             }
 
             if (flag2)
@@ -240,7 +300,7 @@ namespace WorkloadTools.Consumer.Analysis
         private string TruncateSql(string sql)
         {
             sql = sql.Trim();
-            if (TRUNCATE_TO_4000 && sql.Length > 4000)
+            if (TruncateTo4000 && sql.Length > 4000)
                 return sql.Substring(0, 4000);
             return sql;
         }

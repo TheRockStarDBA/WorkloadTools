@@ -1,8 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
-  <?include ProductVersion.wxi?>
-  <Product Id="*" Name="WorkloadTools" Language="1033" Version="$(var.ProductVersion)" Manufacturer="sqlconsulting.it" UpgradeCode="EF0F1905-E03F-4634-BB2E-3A5C3369AB23">
-    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+
+  <?if $(var.Platform) = x64 ?>
+    <?define Win64 = "yes" ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+    <?define PlatformReleaseFolder = "ReleaseX64" ?>
+  <?else ?>
+    <?define Win64 = "no" ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+    <?define PlatformReleaseFolder = "Release" ?>
+  <?endif ?>
+
+  <?define ProductName="WorkloadTools" ?>
+  <?define CompanyName="sqlconsulting.it" ?>
+  <?define ProductVersion="$(var.BuildVersion)" ?>
+  
+  <Product Id="*" Name="$(var.ProductName)" Language="1033" Version="$(var.ProductVersion)" Manufacturer="$(var.CompanyName)" UpgradeCode="EF0F1905-E03F-4634-BB2E-3A5C3369AB23">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="$(var.Platform)" />
 
     <MajorUpgrade AllowDowngrades="yes" />
     <MediaTemplate EmbedCab="yes" />
@@ -13,17 +27,49 @@
 
     <Feature Id="ProductFeature" Title="WorkloadTools" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="WorkloadViewerComponents" />
+      <ComponentGroupRef Id="ProductReports" />
+      <ComponentGroupRef Id="ConvertWorkload" />
     </Feature>
     
   </Product>
 
   <Fragment>
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFilesFolder">
+      <Directory Id="$(var.PlatformProgramFilesFolder)">
         <Directory Id="INSTALLFOLDER" Name="WorkloadTools" />
       </Directory>
     </Directory>
   </Fragment>
 
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Directory Id="dirCD80900D3B5A452B876D2B896E10F051" Name="Reports" />
+    </DirectoryRef>
+  </Fragment>
+  <Fragment>
+    <ComponentGroup Id="ProductReports">
+      <Component Id="cmp20EE999FA46842A8A3E67D82FF987418" Directory="dirCD80900D3B5A452B876D2B896E10F051" Guid="9CDDBDE3-A115-4CEE-9F5F-41DCCABB618E">
+        <File Id="filF8339E0B13434A31BB913FADC4066D7D" Source="..\Reports\WorkloadTools Report - Sample.pbix" />
+        <File Id="fil9A72942DD7E14FC98051DF6EAA302AF0" Source="..\Reports\WorkloadTools Report - Template.pbit" />
+        <File Id="filB480F52C6274410197E5CB8F865AE5BB" Source="..\Reports\README.md" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+  <Fragment>
+    <ComponentGroup Id="ConvertWorkload">
+      <Component Id="ConvertWorkloadId" Directory="INSTALLFOLDER" Guid="633CDC2A-00D2-403D-BBD3-5E96A79AA5A8">
+        <File Id="ConvertWorkloadExeId" Source="..\ConvertWorkload\bin\release\ConvertWorkload.exe" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+  
+  <Fragment>
+    <ComponentGroup Id="ProductLicense">
+      <Component Id="cmpE591726ED3774E44B75D7106236DD456" Directory="INSTALLFOLDER" Guid="2CA2DACC-347C-449E-A39E-4A68310BDAB1">
+        <File Id="fil63DB101A0DC947AC94811D8A5C151E54" Source="..\LICENSE.md" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
 
 </Wix>

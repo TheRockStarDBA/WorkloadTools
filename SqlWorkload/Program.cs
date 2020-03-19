@@ -1,10 +1,13 @@
 ﻿using CommandLine;
 using CommandLine.Text;
 using NLog;
+using NLog.Targets;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Runtime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +29,7 @@ namespace SqlWorkload
         static void Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(GenericErrorHandler);
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
 
             System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
             FileVersionInfo fvi = FileVersionInfo.GetVersionInfo(assembly.Location);
@@ -51,6 +55,40 @@ namespace SqlWorkload
 
         static void Run(Options options)
         {
+            // reconfigure loggers to use a file in the current directory
+            // or the file specified by the "Log" commandline parameter
+            if (LogManager.Configuration != null)
+            {
+                var target = (FileTarget)LogManager.Configuration.FindTargetByName("logfile");
+                if (target != null)
+                {
+                    var pathToLog = options.LogFile;
+                    if (pathToLog == null)
+                    {
+                        pathToLog = Path.Combine(Environment.CurrentDirectory, "SqlWorkload.log");
+                    }
+                    if (!Path.IsPathRooted(pathToLog))
+                    {
+                        pathToLog = Path.Combine(Environment.CurrentDirectory, pathToLog);
+                    }
+                    target.FileName = pathToLog;
+
+                    if(options.LogLevel != null)
+                    {
+                        foreach(var rule in LogManager.Configuration.LoggingRules)
+                        {
+                            foreach (var level in LogLevel.AllLoggingLevels)
+                            {
+                                rule.DisableLoggingForLevel(level);
+                            }
+                            rule.EnableLoggingForLevels(LogLevel.FromString(options.LogLevel),LogLevel.Fatal);
+                        }
+                    }
+
+                    LogManager.ReconfigExistingLoggers();
+                }
+            }
+
             options.ConfigurationFile = System.IO.Path.GetFullPath(options.ConfigurationFile);
             logger.Info(String.Format("Reading configuration from '{0}'", options.ConfigurationFile));
 
@@ -60,8 +98,9 @@ namespace SqlWorkload
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e) {
                 e.Cancel = true;
                 logger.Info("Received shutdown signal...");
-                source.CancelAfter(TimeSpan.FromSeconds(10)); // give a 10 seconds cancellation grace period 
+                source.CancelAfter(TimeSpan.FromSeconds(100)); // give a 100 seconds cancellation grace period 
                 config.Controller.Stop();
+                config.Controller.Dispose();
             };
 
             Task t = processController(config.Controller);
@@ -111,6 +150,12 @@ namespace SqlWorkload
     {
         [Option('F', "File", DefaultValue = "SqlWorkload.json", HelpText = "Configuration file")]
         public string ConfigurationFile { get; set; }
+
+        [Option('L', "Log", HelpText = "Log file")]
+        public string LogFile { get; set; }
+
+        [Option('E', "LogLevel", HelpText = "Log level")]
+        public string LogLevel { get; set; }
 
         [ParserState]
         public IParserState LastParserState { get; set; }
